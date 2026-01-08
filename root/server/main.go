@@ -16,14 +16,17 @@ import (
 )
 
 var dbConn *pgx.Conn
+var port string
 
 var lastPrice string = "loading..."
 var mu sync.RWMutex
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file:", err)
+	_ = godotenv.Load()
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
 	conn := db.ConnToDB()
@@ -41,10 +44,7 @@ func main() {
 }
 
 func runHTTP() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
 		price := lastPrice

@@ -11,7 +11,13 @@ import (
 )
 
 func Conn(conn *pgx.Conn) {
-	bot, err := tgbotapi.NewBotAPI(os.Getenv("BOT_TOKEN"))
+
+	botToken := os.Getenv("BOT_TOKEN")
+	if botToken == "" {
+		log.Fatal("BOT_TOKEN is not set in environment variables")
+	}
+
+	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Fatal("Error creating bot:", err)
 	}
