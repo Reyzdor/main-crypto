@@ -37,7 +37,7 @@ func main() {
 
 	go wsToBtc()
 
-	go runHTTP(port)
+	go runHTTP()
 
 	select {}
 
