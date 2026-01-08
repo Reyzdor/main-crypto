@@ -7,6 +7,7 @@ import (
 	"main-crypto/pkg/bot"
 	"main-crypto/pkg/db"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -40,6 +41,10 @@ func main() {
 }
 
 func runHTTP() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
 		price := lastPrice
@@ -50,7 +55,7 @@ func runHTTP() {
 		json.NewEncoder(w).Encode(map[string]string{"btcPrice": price})
 	})
 
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":"+port, nil)
 }
 
 type TickerMsg struct {
