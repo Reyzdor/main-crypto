@@ -24,7 +24,7 @@ var mu sync.RWMutex
 func main() {
 	_ = godotenv.Load()
 
-	port := os.Getenv("PORT")
+	port = os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
@@ -37,7 +37,7 @@ func main() {
 
 	go wsToBtc()
 
-	go runHTTP()
+	go runHTTP(port)
 
 	select {}
 
