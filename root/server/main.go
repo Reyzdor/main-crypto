@@ -112,7 +112,7 @@ func wsToBtc() {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("Conn read:", err)
-			continue
+			break
 		}
 
 		var ticker TickerMsg
