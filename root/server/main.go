@@ -43,6 +43,23 @@ func main() {
 
 }
 
+func coinHandler(w http.ResponseWriter, r *http.Request) {
+	coins := []Coin{
+		{ID: "btc", Name: "Bitcoin"},
+		{ID: "eth", Name: "Etherium"},
+		{ID: "sol", Name: "Solana"},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(coins)
+}
+
+type Coin struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func runHTTP() {
 
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +71,8 @@ func runHTTP() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(map[string]string{"btcPrice": price})
 	})
+
+	http.HandleFunc("/coins", coinHandler)
 
 	http.ListenAndServe(":"+port, nil)
 }
