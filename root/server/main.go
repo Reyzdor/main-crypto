@@ -43,25 +43,12 @@ func main() {
 
 }
 
-func coinHandler(w http.ResponseWriter, r *http.Request) {
-	coins := []Coin{
-		{ID: "btc", Name: "Bitcoin"},
-		{ID: "eth", Name: "Etherium"},
-		{ID: "sol", Name: "Solana"},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(coins)
-}
-
 type Coin struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
 func runHTTP() {
-
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
 		price := lastPrice
@@ -72,9 +59,23 @@ func runHTTP() {
 		json.NewEncoder(w).Encode(map[string]string{"btcPrice": price})
 	})
 
-	http.HandleFunc("/coins", coinHandler)
+	http.HandleFunc("/coins", func(w http.ResponseWriter, r *http.Request) {
+		coins := []Coin{
+			{ID: "btc", Name: "Bitcoin"},
+			{ID: "eth", Name: "Ethereum"},
+			{ID: "sol", Name: "Solana"},
+		}
 
-	http.ListenAndServe(":"+port, nil)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(coins)
+	})
+
+	log.Println("Server running on port:", port)
+	err := http.ListenAndServe(":"+port, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 type TickerMsg struct {
