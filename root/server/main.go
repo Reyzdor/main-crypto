@@ -18,7 +18,7 @@ import (
 var dbConn *pgx.Conn
 var port string
 
-var lastPrice string = "loading..."
+var prices = make(map[string]string)
 var mu sync.RWMutex
 
 func main() {
@@ -33,7 +33,10 @@ func main() {
 	defer dbConn.Close(context.Background())
 
 	go bot.Conn(conn)
-	go wsToBtc()
+
+	go wsToCoin("BTCUSDC", "BTC")
+	go wsToCoin("ETHUSDC", "ETH")
+	go wsToCoin("SOLUSDC", "SOL")
 
 	go runHTTP()
 
@@ -64,12 +67,11 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 func runHTTP() {
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
-		price := lastPrice
-		mu.RUnlock()
+		defer mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(map[string]string{"btcPrice": price})
+		json.NewEncoder(w).Encode(prices)
 	})
 
 	http.HandleFunc("/coins", coinsHandler)
@@ -87,7 +89,7 @@ type TickerMsg struct {
 	} `json:"data"`
 }
 
-func wsToBtc() {
+func wsToCoin(symbol string, coinID string) {
 	url := "wss://stream.bybit.com/v5/public/spot"
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
@@ -99,10 +101,8 @@ func wsToBtc() {
 	defer conn.Close()
 
 	sub := map[string]interface{}{
-		"op": "subscribe",
-		"args": []string{
-			"tickers.BTCUSDC",
-		},
+		"op":   "subscribe",
+		"args": []string{"tickers." + symbol},
 	}
 
 	msg, _ := json.Marshal(sub)
@@ -122,7 +122,7 @@ func wsToBtc() {
 
 		if ticker.Data.LastPrice != "" {
 			mu.Lock()
-			lastPrice = ticker.Data.LastPrice
+			prices[coinID] = ticker.Data.LastPrice
 			mu.Unlock()
 		}
 	}
