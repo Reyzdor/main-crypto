@@ -68,7 +68,12 @@ func runHTTP() {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(coins)
+
+		if err := json.NewEncoder(w).Encode(coins); err != nil {
+			log.Println("Error encoding coins:", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	log.Println("Server running on port:", port)
