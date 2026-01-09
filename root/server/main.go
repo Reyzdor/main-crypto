@@ -101,7 +101,7 @@ func wsToBtc() {
 	sub := map[string]interface{}{
 		"op": "subscribe",
 		"args": []string{
-			"tickers.BTCUSDС",
+			"tickers.BTCUSDC",
 		},
 	}
 
