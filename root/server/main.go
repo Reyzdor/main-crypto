@@ -30,22 +30,35 @@ func main() {
 	}
 
 	conn := db.ConnToDB()
-
 	defer dbConn.Close(context.Background())
 
 	go bot.Conn(conn)
-
 	go wsToBtc()
 
 	go runHTTP()
 
 	select {}
-
 }
 
 type Coin struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+func coinsHandler(w http.ResponseWriter, r *http.Request) {
+	coins := []Coin{
+		{ID: "btc", Name: "Bitcoin"},
+		{ID: "eth", Name: "Ethereum"},
+		{ID: "sol", Name: "Solana"},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if err := json.NewEncoder(w).Encode(coins); err != nil {
+		log.Println("Error encoding coins:", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
 }
 
 func runHTTP() {
@@ -59,21 +72,10 @@ func runHTTP() {
 		json.NewEncoder(w).Encode(map[string]string{"btcPrice": price})
 	})
 
-	http.HandleFunc("/coins", func(w http.ResponseWriter, r *http.Request) {
-		coins := []Coin{
-			{ID: "btc", Name: "Bitcoin"},
-			{ID: "eth", Name: "Ethereum"},
-			{ID: "sol", Name: "Solana"},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(coins)
-	})
+	http.HandleFunc("/coins", coinsHandler)
 
 	log.Println("Server running on port:", port)
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -91,6 +93,7 @@ func wsToBtc() {
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		log.Println("Conn err:", err)
+		return
 	}
 
 	defer conn.Close()
@@ -107,14 +110,12 @@ func wsToBtc() {
 
 	for {
 		_, msg, err := conn.ReadMessage()
-
 		if err != nil {
 			log.Println("Conn read:", err)
 			continue
 		}
 
 		var ticker TickerMsg
-
 		if err := json.Unmarshal(msg, &ticker); err != nil {
 			continue
 		}
