@@ -29,11 +29,11 @@ func main() {
 		port = "8080"
 	}
 
-	dbConn := db.ConnToDB()
+	conn := db.ConnToDB()
 
 	defer dbConn.Close(context.Background())
 
-	go bot.Conn(dbConn)
+	go bot.Conn(conn)
 
 	go wsToBtc()
 
