@@ -5,31 +5,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"main-crypto/pkg/bot"
-	"main-crypto/pkg/db"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 
+	"main-crypto/pkg/bot"
+	"main-crypto/pkg/db"
+
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 )
 
-var dbConn *pgx.Conn
-var port string
+var (
+	dbConn *pgx.Conn
+	port   string
 
-var prices = make(map[string]string)
-var mu sync.RWMutex
+	prices = make(map[string]string)
+	mu     sync.RWMutex
 
-var prices24hAgo = map[string]float64{
-	"BTC": 0,
-	"ETH": 0,
-	"SOL": 0,
-}
-var mu24h sync.RWMutex
+	prices24hAgo = map[string]float64{
+		"BTC": 0,
+		"ETH": 0,
+		"SOL": 0,
+	}
+	mu24h sync.RWMutex
+)
 
 func main() {
 	_ = godotenv.Load()
@@ -40,7 +43,7 @@ func main() {
 	}
 
 	conn := db.ConnToDB()
-	defer dbConn.Close(context.Background())
+	defer conn.Close(context.Background())
 
 	go bot.Conn(conn)
 
@@ -53,24 +56,54 @@ func main() {
 	select {}
 }
 
-type Coin struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+func runHTTP() {
+	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
+		mu.RLock()
+		defer mu.RUnlock()
+		jsonResponse(w, prices)
+	})
+
+	http.HandleFunc("/api/24h", func(w http.ResponseWriter, r *http.Request) {
+		mu24h.RLock()
+		defer mu24h.RUnlock()
+		jsonResponse(w, prices24hAgo)
+	})
+
+	go update24hPrices()
+
+	log.Println("Server running on port:", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func coinsHandler(w http.ResponseWriter, r *http.Request) {
-	coins := []Coin{
-		{ID: "btc", Name: "Bitcoin"},
-		{ID: "eth", Name: "Ethereum"},
-		{ID: "sol", Name: "Solana"},
-	}
-
+func jsonResponse(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(coins)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
-func bybit24hPrice(symbol string) (float64, error) {
+func update24hPrices() {
+	for {
+		for _, s := range []struct {
+			coin, symbol string
+		}{
+			{"BTC", "BTCUSDT"},
+			{"ETH", "ETHUSDT"},
+			{"SOL", "SOLUSDT"},
+		} {
+			price, err := bybitPrev24hPrice(s.symbol)
+			if err != nil {
+				log.Println("Bybit 24h error:", s.coin, err)
+				continue
+			}
+			mu24h.Lock()
+			prices24hAgo[s.coin] = price
+			mu24h.Unlock()
+		}
+		time.Sleep(10 * time.Minute)
+	}
+}
+
+func bybitPrev24hPrice(symbol string) (float64, error) {
 	url := fmt.Sprintf(
 		"https://api.bybit.com/v5/market/tickers?category=spot&symbol=%s",
 		symbol,
@@ -106,83 +139,33 @@ func bybit24hPrice(symbol string) (float64, error) {
 		return 0, fmt.Errorf("empty ticker list")
 	}
 
-	price, err := strconv.ParseFloat(res.Result.List[0].PrevPrice24h, 64)
-	if err != nil {
-		return 0, err
-	}
-
-	return price, nil
-}
-
-func runHTTP() {
-	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
-		mu.RLock()
-		defer mu.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(prices)
-	})
-
-	http.HandleFunc("/coins", coinsHandler)
-
-	http.HandleFunc("/api/24h", func(w http.ResponseWriter, r *http.Request) {
-		mu24h.RLock()
-		defer mu24h.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(prices24hAgo)
-	})
-
-	go func() {
-		for {
-			for _, sym := range []struct {
-				coin, symbol string
-			}{
-				{"BTC", "BTCUSDT"},
-				{"ETH", "ETHUSDT"},
-				{"SOL", "SOLUSDT"},
-			} {
-				price, err := bybit24hPrice(sym.symbol)
-				if err != nil {
-					log.Println("Bybit 24h error:", sym.coin, err)
-					continue
-				}
-				mu24h.Lock()
-				prices24hAgo[sym.coin] = price
-				mu24h.Unlock()
-			}
-			time.Sleep(10 * time.Minute)
-		}
-	}()
-
-	log.Println("Server running on port:", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	return strconv.ParseFloat(res.Result.List[0].PrevPrice24h, 64)
 }
 
 type TickerMsg struct {
-	Topic string `json:"topic"`
-	Data  struct {
+	Data struct {
 		LastPrice string `json:"lastPrice"`
 	} `json:"data"`
 }
 
-func wsToCoin(symbol string, coinID string) {
-	url := "wss://stream.bybit.com/v5/public/spot"
-
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+func wsToCoin(symbol, coinID string) {
+	conn, _, err := websocket.DefaultDialer.Dial(
+		"wss://stream.bybit.com/v5/public/spot",
+		nil,
+	)
 	if err != nil {
 		log.Println("WS error:", err)
 		return
 	}
 	defer conn.Close()
 
-	sub := map[string]interface{}{
+	sub := map[string]any{
 		"op":   "subscribe",
 		"args": []string{"tickers." + symbol},
 	}
 
 	msg, _ := json.Marshal(sub)
-	conn.WriteMessage(websocket.TextMessage, msg)
+	_ = conn.WriteMessage(websocket.TextMessage, msg)
 
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -191,10 +174,10 @@ func wsToCoin(symbol string, coinID string) {
 			return
 		}
 
-		var ticker TickerMsg
-		if json.Unmarshal(msg, &ticker) == nil && ticker.Data.LastPrice != "" {
+		var t TickerMsg
+		if json.Unmarshal(msg, &t) == nil && t.Data.LastPrice != "" {
 			mu.Lock()
-			prices[coinID] = ticker.Data.LastPrice
+			prices[coinID] = t.Data.LastPrice
 			mu.Unlock()
 		}
 	}
