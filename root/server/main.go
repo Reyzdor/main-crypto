@@ -71,15 +71,16 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func bybit24hPrice(symbol string) (float64, error) {
-	start := time.Now().Add(-24 * time.Hour).UnixMilli()
-
 	url := fmt.Sprintf(
-		"https://api.bybit.com/v5/market/kline?category=spot&symbol=%s&interval=1&start=%d&limit=1",
+		"https://api.bybit.com/v5/market/tickers?category=spot&symbol=%s",
 		symbol,
-		start,
 	)
 
-	resp, err := http.Get(url)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -91,7 +92,9 @@ func bybit24hPrice(symbol string) (float64, error) {
 
 	var res struct {
 		Result struct {
-			List [][]string `json:"list"`
+			List []struct {
+				PrevPrice24h string `json:"prevPrice24h"`
+			} `json:"list"`
 		} `json:"result"`
 	}
 
@@ -100,10 +103,10 @@ func bybit24hPrice(symbol string) (float64, error) {
 	}
 
 	if len(res.Result.List) == 0 {
-		return 0, fmt.Errorf("no kline data")
+		return 0, fmt.Errorf("empty ticker list")
 	}
 
-	price, err := strconv.ParseFloat(res.Result.List[0][4], 64)
+	price, err := strconv.ParseFloat(res.Result.List[0].PrevPrice24h, 64)
 	if err != nil {
 		return 0, err
 	}
