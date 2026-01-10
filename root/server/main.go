@@ -23,6 +23,13 @@ var port string
 var prices = make(map[string]string)
 var mu sync.RWMutex
 
+var cachedPrices = map[string]float64{
+	"BTC": 0,
+	"ETH": 0,
+	"SOL": 0,
+}
+var muCached sync.RWMutex
+
 func main() {
 	_ = godotenv.Load()
 
@@ -97,7 +104,6 @@ func runHTTP() {
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
 		defer mu.RUnlock()
-
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(prices)
@@ -105,31 +111,27 @@ func runHTTP() {
 
 	http.HandleFunc("/coins", coinsHandler)
 
-	var cachedPrices map[string]float64
-	var lastUpdate time.Time
-	var cacheDuration = 1 * time.Minute
-
 	http.HandleFunc("/api/prices", func(w http.ResponseWriter, r *http.Request) {
+		muCached.RLock()
+		defer muCached.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		if cachedPrices == nil || time.Since(lastUpdate) > cacheDuration {
-			prices, err := coinGecko()
-			if err != nil {
-				log.Println("CoinGecko error:", err)
-				if cachedPrices != nil {
-					json.NewEncoder(w).Encode(cachedPrices)
-					return
-				}
-				http.Error(w, "Failed to fetch CoinGecko prices", http.StatusInternalServerError)
-				return
-			}
-			cachedPrices = prices
-			lastUpdate = time.Now()
-		}
-
 		json.NewEncoder(w).Encode(cachedPrices)
 	})
+
+	go func() {
+		for {
+			newPrices, err := coinGecko()
+			if err != nil {
+				log.Println("CoinGecko error:", err)
+			} else {
+				muCached.Lock()
+				cachedPrices = newPrices
+				muCached.Unlock()
+			}
+			time.Sleep(1 * time.Minute)
+		}
+	}()
 
 	log.Println("Server running on port:", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
