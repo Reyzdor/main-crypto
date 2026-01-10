@@ -64,6 +64,28 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func coinGecko() (map[string]float64, error) {
+	url := "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd"
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]map[string]float64
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	prices := make(map[string]float64)
+	prices["BTC"] = result["bitcoin"]["usd"]
+	prices["ETH"] = result["ethereum"]["usd"]
+	prices["SOL"] = result["solana"]["usd"]
+
+	return prices, nil
+}
+
 func runHTTP() {
 	http.HandleFunc("/price", func(w http.ResponseWriter, r *http.Request) {
 		mu.RLock()
@@ -75,6 +97,20 @@ func runHTTP() {
 	})
 
 	http.HandleFunc("/coins", coinsHandler)
+
+	http.HandleFunc("/api/prices", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		coinGeckoPrices, err := coinGecko()
+		if err != nil {
+			log.Println("CoinGecko error:", err)
+			http.Error(w, "Failed to fetch CoinGecko prices", http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(coinGeckoPrices)
+	})
 
 	log.Println("Server running on port:", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
