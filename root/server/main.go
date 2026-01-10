@@ -113,15 +113,15 @@ func runHTTP() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		if time.Since(lastUpdate) > cacheDuration || cachedPrices == nil {
+		if cachedPrices == nil || time.Since(lastUpdate) > cacheDuration {
 			prices, err := coinGecko()
 			if err != nil {
-				log.Println("Gecko error:", err)
+				log.Println("CoinGecko error:", err)
 				if cachedPrices != nil {
 					json.NewEncoder(w).Encode(cachedPrices)
 					return
 				}
-				http.Error(w, "Failed gecko:", http.StatusInternalServerError)
+				http.Error(w, "Failed to fetch CoinGecko prices", http.StatusInternalServerError)
 				return
 			}
 			cachedPrices = prices
