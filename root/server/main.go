@@ -9,6 +9,7 @@ import (
 	"main-crypto/pkg/db"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -70,9 +71,16 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func bybit24hPrice(symbol string) (float64, error) {
-	ts := time.Now().Add(-24 * time.Hour).Unix()
+	end := time.Now().Add(-24 * time.Hour)
+	start := end.Add(-1 * time.Minute)
 
-	url := fmt.Sprintf("https://api.bybit.com/v2/public/kline/list?symbol=%s&interval=1&from=%d", symbol, ts)
+	url := fmt.Sprintf(
+		"https://api.bybit.com/v5/market/kline?category=spot&symbol=%s&interval=1&start=%d&end=%d",
+		symbol,
+		start.UnixMilli(),
+		end.UnixMilli(),
+	)
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return 0, err
@@ -83,22 +91,21 @@ func bybit24hPrice(symbol string) (float64, error) {
 		return 0, fmt.Errorf("Bybit returned status %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Result []struct {
-			Close string `json:"close"`
+	var res struct {
+		Result struct {
+			List [][]string `json:"list"`
 		} `json:"result"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return 0, err
 	}
 
-	if len(result.Result) == 0 {
-		return 0, fmt.Errorf("No kline data")
+	if len(res.Result.List) == 0 {
+		return 0, fmt.Errorf("no kline data")
 	}
 
-	var price float64
-	fmt.Sscanf(result.Result[0].Close, "%f", &price)
+	price, _ := strconv.ParseFloat(res.Result.List[0][4], 64)
 	return price, nil
 }
 
