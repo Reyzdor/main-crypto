@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"main-crypto/pkg/bot"
 	"main-crypto/pkg/db"
@@ -67,11 +68,16 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 func coinGecko() (map[string]float64, error) {
 	url := "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd"
 
-	resp, err := http.Get(url)
+	client := &http.Client{}
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CoinGecko returned status %d", resp.StatusCode)
+	}
 
 	var result map[string]map[string]float64
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
