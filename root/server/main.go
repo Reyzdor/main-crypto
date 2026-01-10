@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
@@ -104,18 +105,30 @@ func runHTTP() {
 
 	http.HandleFunc("/coins", coinsHandler)
 
+	var cachedPrices map[string]float64
+	var lastUpdate time.Time
+	var cacheDuration = 1 * time.Minute
+
 	http.HandleFunc("/api/prices", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		coinGeckoPrices, err := coinGecko()
-		if err != nil {
-			log.Println("CoinGecko error:", err)
-			http.Error(w, "Failed to fetch CoinGecko prices", http.StatusInternalServerError)
-			return
+		if time.Since(lastUpdate) > cacheDuration || cachedPrices == nil {
+			prices, err := coinGecko()
+			if err != nil {
+				log.Println("Gecko error:", err)
+				if cachedPrices != nil {
+					json.NewEncoder(w).Encode(cachedPrices)
+					return
+				}
+				http.Error(w, "Failed gecko:", http.StatusInternalServerError)
+				return
+			}
+			cachedPrices = prices
+			lastUpdate = time.Now()
 		}
 
-		json.NewEncoder(w).Encode(coinGeckoPrices)
+		json.NewEncoder(w).Encode(cachedPrices)
 	})
 
 	log.Println("Server running on port:", port)
