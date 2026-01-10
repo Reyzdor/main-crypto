@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"main-crypto/pkg/bot"
 	"main-crypto/pkg/db"
@@ -44,6 +43,15 @@ func main() {
 
 	go bot.Conn(conn)
 
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		updateBasePrices()
+		for range ticker.C {
+			updateBasePrices()
+		}
+	}()
+
 	go wsToCoin("BTCUSDT", "BTC")
 	go wsToCoin("ETHUSDT", "ETH")
 	go wsToCoin("SOLUSDT", "SOL")
@@ -58,6 +66,65 @@ type Coin struct {
 	Name string `json:"name"`
 }
 
+type BasePrice struct {
+	Price float64   `json:"price"`
+	Time  time.Time `json:"time"`
+}
+
+func initBasePrices() {
+	for _, c := range []string{"BTC", "ETH", "SOL"} {
+		if _, err := loadBasePrice(c); err != nil {
+			log.Println("Base price not found for", c)
+		}
+	}
+}
+
+func updateBasePrices() {
+	for _, sym := range []struct {
+		coin, symbol string
+	}{
+		{"BTC", "BTCUSDT"},
+		{"ETH", "ETHUSDT"},
+		{"SOL", "SOLUSDT"},
+	} {
+		mu.RLock()
+		lastPriceStr := prices[sym.coin]
+		mu.RUnlock()
+
+		if lastPriceStr == "" {
+			continue
+		}
+
+		price, err := strconv.ParseFloat(lastPriceStr, 64)
+		if err != nil {
+			log.Println("Error parsing price for", sym.coin, err)
+			continue
+		}
+
+		setBasePrice(sym.coin, price)
+		log.Println("Updated base price for", sym.coin, "=", price)
+	}
+}
+
+func setBasePrice(symbol string, price float64) {
+	data := BasePrice{
+		Price: price,
+		Time:  time.Now(),
+	}
+	b, _ := json.Marshal(data)
+	os.WriteFile(symbol+"_base.json", b, 0644)
+}
+
+func loadBasePrice(symbol string) (BasePrice, error) {
+	b, err := os.ReadFile(symbol + "_base.json")
+	if err != nil {
+		return BasePrice{}, err
+	}
+	var bp BasePrice
+	json.Unmarshal(b, &bp)
+	return bp, nil
+}
+
 func coinsHandler(w http.ResponseWriter, r *http.Request) {
 	coins := []Coin{
 		{ID: "btc", Name: "Bitcoin"},
@@ -68,47 +135,6 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(coins)
-}
-
-func bybit24hPrice(symbol string) (float64, error) {
-	start := time.Now().Add(-24 * time.Hour).UnixMilli()
-
-	url := fmt.Sprintf(
-		"https://api.bybit.com/v5/market/kline?category=spot&symbol=%s&interval=1&start=%d&limit=1",
-		symbol,
-		start,
-	)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("Bybit returned status %d", resp.StatusCode)
-	}
-
-	var res struct {
-		Result struct {
-			List [][]string `json:"list"`
-		} `json:"result"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return 0, err
-	}
-
-	if len(res.Result.List) == 0 {
-		return 0, fmt.Errorf("no kline data")
-	}
-
-	price, err := strconv.ParseFloat(res.Result.List[0][4], 64)
-	if err != nil {
-		return 0, err
-	}
-
-	return price, nil
 }
 
 func runHTTP() {
@@ -122,35 +148,20 @@ func runHTTP() {
 
 	http.HandleFunc("/coins", coinsHandler)
 
-	http.HandleFunc("/api/24h", func(w http.ResponseWriter, r *http.Request) {
-		mu24h.RLock()
-		defer mu24h.RUnlock()
+	http.HandleFunc("/api/base-price", func(w http.ResponseWriter, r *http.Request) {
+		result := map[string]BasePrice{}
+		for _, c := range []string{"BTC", "ETH", "SOL"} {
+			bp, err := loadBasePrice(c)
+			if err != nil {
+				log.Println("Base price not found for", c)
+				continue
+			}
+			result[c] = bp
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(prices24hAgo)
+		json.NewEncoder(w).Encode(result)
 	})
-
-	go func() {
-		for {
-			for _, sym := range []struct {
-				coin, symbol string
-			}{
-				{"BTC", "BTCUSDT"},
-				{"ETH", "ETHUSDT"},
-				{"SOL", "SOLUSDT"},
-			} {
-				price, err := bybit24hPrice(sym.symbol)
-				if err != nil {
-					log.Println("Bybit 24h error:", sym.coin, err)
-					continue
-				}
-				mu24h.Lock()
-				prices24hAgo[sym.coin] = price
-				mu24h.Unlock()
-			}
-			time.Sleep(10 * time.Minute)
-		}
-	}()
 
 	log.Println("Server running on port:", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
