@@ -44,9 +44,9 @@ func main() {
 
 	go bot.Conn(conn)
 
-	go wsToCoin("BTCUSDC", "BTC")
-	go wsToCoin("ETHUSDC", "ETH")
-	go wsToCoin("SOLUSDC", "SOL")
+	go wsToCoin("BTCUSDT", "BTC")
+	go wsToCoin("ETHUSDT", "ETH")
+	go wsToCoin("SOLUSDT", "SOL")
 
 	go runHTTP()
 
@@ -71,14 +71,12 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func bybit24hPrice(symbol string) (float64, error) {
-	end := time.Now().Add(-24 * time.Hour)
-	start := end.Add(-1 * time.Minute)
+	start := time.Now().Add(-24 * time.Hour).UnixMilli()
 
 	url := fmt.Sprintf(
-		"https://api.bybit.com/v5/market/kline?category=spot&symbol=%s&interval=1&start=%d&end=%d",
+		"https://api.bybit.com/v5/market/kline?category=spot&symbol=%s&interval=1&start=%d&limit=1",
 		symbol,
-		start.UnixMilli(),
-		end.UnixMilli(),
+		start,
 	)
 
 	resp, err := http.Get(url)
@@ -105,7 +103,11 @@ func bybit24hPrice(symbol string) (float64, error) {
 		return 0, fmt.Errorf("no kline data")
 	}
 
-	price, _ := strconv.ParseFloat(res.Result.List[0][4], 64)
+	price, err := strconv.ParseFloat(res.Result.List[0][4], 64)
+	if err != nil {
+		return 0, err
+	}
+
 	return price, nil
 }
 
@@ -133,9 +135,9 @@ func runHTTP() {
 			for _, sym := range []struct {
 				coin, symbol string
 			}{
-				{"BTC", "BTCUSDC"},
-				{"ETH", "ETHUSDC"},
-				{"SOL", "SOLUSDC"},
+				{"BTC", "BTCUSDT"},
+				{"ETH", "ETHUSDT"},
+				{"SOL", "SOLUSDT"},
 			} {
 				price, err := bybit24hPrice(sym.symbol)
 				if err != nil {
@@ -151,9 +153,7 @@ func runHTTP() {
 	}()
 
 	log.Println("Server running on port:", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
-	}
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 type TickerMsg struct {
@@ -168,7 +168,7 @@ func wsToCoin(symbol string, coinID string) {
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
-		log.Println("Conn err:", err)
+		log.Println("WS error:", err)
 		return
 	}
 	defer conn.Close()
@@ -184,16 +184,12 @@ func wsToCoin(symbol string, coinID string) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			log.Println("Conn read:", err)
-			break
+			log.Println("WS read:", err)
+			return
 		}
 
 		var ticker TickerMsg
-		if err := json.Unmarshal(msg, &ticker); err != nil {
-			continue
-		}
-
-		if ticker.Data.LastPrice != "" {
+		if json.Unmarshal(msg, &ticker) == nil && ticker.Data.LastPrice != "" {
 			mu.Lock()
 			prices[coinID] = ticker.Data.LastPrice
 			mu.Unlock()
