@@ -23,12 +23,12 @@ var port string
 var prices = make(map[string]string)
 var mu sync.RWMutex
 
-var cachedPrices = map[string]float64{
+var prices24hAgo = map[string]float64{
 	"BTC": 0,
 	"ETH": 0,
 	"SOL": 0,
 }
-var muCached sync.RWMutex
+var mu24h sync.RWMutex
 
 func main() {
 	_ = godotenv.Load()
@@ -66,38 +66,40 @@ func coinsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if err := json.NewEncoder(w).Encode(coins); err != nil {
-		log.Println("Error encoding coins:", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-	}
+	json.NewEncoder(w).Encode(coins)
 }
 
-func coinGecko() (map[string]float64, error) {
-	url := "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd"
+func bybit24hPrice(symbol string) (float64, error) {
+	ts := time.Now().Add(-24 * time.Hour).Unix()
 
-	client := &http.Client{}
-	resp, err := client.Get(url)
+	url := fmt.Sprintf("https://api.bybit.com/v2/public/kline/list?symbol=%s&interval=1&from=%d", symbol, ts)
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("CoinGecko returned status %d", resp.StatusCode)
+		return 0, fmt.Errorf("Bybit returned status %d", resp.StatusCode)
 	}
 
-	var result map[string]map[string]float64
+	var result struct {
+		Result []struct {
+			Close string `json:"close"`
+		} `json:"result"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	prices := make(map[string]float64)
-	prices["BTC"] = result["bitcoin"]["usd"]
-	prices["ETH"] = result["ethereum"]["usd"]
-	prices["SOL"] = result["solana"]["usd"]
+	if len(result.Result) == 0 {
+		return 0, fmt.Errorf("No kline data")
+	}
 
-	return prices, nil
+	var price float64
+	fmt.Sscanf(result.Result[0].Close, "%f", &price)
+	return price, nil
 }
 
 func runHTTP() {
@@ -111,25 +113,33 @@ func runHTTP() {
 
 	http.HandleFunc("/coins", coinsHandler)
 
-	http.HandleFunc("/api/prices", func(w http.ResponseWriter, r *http.Request) {
-		muCached.RLock()
-		defer muCached.RUnlock()
+	http.HandleFunc("/api/24h", func(w http.ResponseWriter, r *http.Request) {
+		mu24h.RLock()
+		defer mu24h.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		json.NewEncoder(w).Encode(cachedPrices)
+		json.NewEncoder(w).Encode(prices24hAgo)
 	})
 
 	go func() {
 		for {
-			newPrices, err := coinGecko()
-			if err != nil {
-				log.Println("CoinGecko error:", err)
-			} else {
-				muCached.Lock()
-				cachedPrices = newPrices
-				muCached.Unlock()
+			for _, sym := range []struct {
+				coin, symbol string
+			}{
+				{"BTC", "BTCUSDC"},
+				{"ETH", "ETHUSDC"},
+				{"SOL", "SOLUSDC"},
+			} {
+				price, err := bybit24hPrice(sym.symbol)
+				if err != nil {
+					log.Println("Bybit 24h error:", sym.coin, err)
+					continue
+				}
+				mu24h.Lock()
+				prices24hAgo[sym.coin] = price
+				mu24h.Unlock()
 			}
-			time.Sleep(1 * time.Minute)
+			time.Sleep(10 * time.Minute)
 		}
 	}()
 
@@ -154,7 +164,6 @@ func wsToCoin(symbol string, coinID string) {
 		log.Println("Conn err:", err)
 		return
 	}
-
 	defer conn.Close()
 
 	sub := map[string]interface{}{
